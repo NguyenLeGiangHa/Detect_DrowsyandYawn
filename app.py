@@ -7,9 +7,13 @@ import os
 import datetime
 import threading
 import time
+import requests  # Import requests for making API calls
+import json  # Import json for handling JSON data
 
 import train as train
 import winsound
+from MAR import mouth_aspect_ratio  
+from EAR import eye_aspect_ratio
 
 def yawn(mouth):
     return (euclideanDist(mouth[2], mouth[10]) + euclideanDist(mouth[4], mouth[8])) / (
@@ -46,7 +50,7 @@ def getFaceDirection(shape, size):
          [0, focal_length, center[1]],
          [0, 0, 1]], dtype="double"
     )
-    dist_coeffs = np.zeros((4, 1))  # Assuming no lens distortion
+    dist_coeffs = np.zeros((4, 1))
     (success, rotation_vector, translation_vector) = cv2.solvePnP(model_points, image_points, camera_matrix,
                                                                   dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE)
     return translation_vector[1][0]
@@ -106,21 +110,57 @@ CAPTURE_DIR = 'captured_drowsy'
 if not os.path.exists(CAPTURE_DIR):
     os.makedirs(CAPTURE_DIR)
 
+class APIHandler:
+    def __init__(self, login_url, credentials):
+        self.login_url = login_url
+        self.credentials = credentials
+        self.session = requests.Session()
+        self.user_id = None
+        self.login()
+
+    def login(self):
+        response = self.session.post(self.login_url, json=self.credentials)
+        if response.status_code == 200:
+            print("Login successful.")
+            self.user_id = response.json().get('id')  # Extract user ID from response
+        else:
+            print(f"Login failed: {response.status_code}, {response.text}")
+
+    def upload_image(self, image_path):
+        if not self.user_id:
+            print("User ID is required for image upload.")
+            return
+        with open(image_path, 'rb') as img_file:
+            files = {'violate_photo': (image_path, img_file)}
+            response = self.session.post('http://103.77.209.93:3001/api/violate/add', files=files)
+            print(f"Response from API: {response.status_code}, {response.text}")
+
+# Initialize API handler
+def initialize_api_handler():
+    global api_handler
+    LOGIN_API_URL = "http://103.77.209.93:3001/api/login/user-login"
+    LOGIN_CREDENTIALS = {
+    "email": "nguyn@gmail.com",
+    "password": "123456789"
+}
+    api_handler = APIHandler(LOGIN_API_URL, LOGIN_CREDENTIALS)
+
+# Modify save_drowsy_image to upload image to API
 def save_drowsy_image(frame, detection_type):
     """
     Save the frame with timestamp and driver information
     """
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f"{CAPTURE_DIR}/drowsy_{DRIVER_INFO['id']}_{timestamp}.jpg"
+    filename = f"{CAPTURE_DIR}/drowsy_{api_handler.user_id}_{timestamp}.jpg"  # Use user ID from API handler
     
     # Create a copy of the frame to add information
     frame_with_info = frame.copy()
     
     # Add information to the image
     info_text = [
-        f"Driver ID: {DRIVER_INFO['id']}",
-        f"Name: {DRIVER_INFO['name']}",
-        f"License: {DRIVER_INFO['license']}",
+        # f"Driver ID: {DRIVER_INFO['id']}",
+        # f"Name: {DRIVER_INFO['name']}",
+        # f"License: {DRIVER_INFO['license']}",
         f"Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"Detection: {detection_type}"
     ]
@@ -135,7 +175,9 @@ def save_drowsy_image(frame, detection_type):
     # Save the image
     cv2.imwrite(filename, frame_with_info)
     print(f"Saved drowsy detection image: {filename}")
-
+    
+    # Attempt to upload the image to the API
+    api_handler.upload_image(filename)
 
 DROWSY_THRESHOLD = 5  # seconds before alert triggers
 drowsy_start_time = None
@@ -164,45 +206,51 @@ stop_alert = threading.Event()
 alert_thread = None
 yawn_thread = None
 
+MOUTH_AR_THRESH = 1.2  # Set the threshold for yawn detection
+
+# Call the initialize function at the start of the application
+initialize_api_handler()
+
 while (True):
     ret, frame = capture.read()
-    size = frame.shape
+    if not ret:
+        break  # Exit if frame is not captured
 
     gray = frame
     rects = detector(gray, 0)
-    if (len(rects)):
+    if len(rects):
         shape = face_utils.shape_to_np(predictor(gray, rects[0]))
         leftEye = shape[leStart:leEnd]
         rightEye = shape[reStart:reEnd]
+        mouth = shape[mStart:mEnd]  # Get mouth coordinates
+
         leftEyeHull = cv2.convexHull(leftEye)
         rightEyeHull = cv2.convexHull(rightEye)
-        leftEAR = ear(leftEye)  
-        rightEAR = ear(rightEye)  
+
+        leftEAR = eye_aspect_ratio(leftEye)  
+        rightEAR = eye_aspect_ratio(rightEye)  
         avgEAR = (leftEAR + rightEAR) / 2.0
         eyeContourColor = (255, 255, 255)
 
-        if (yawn(shape[mStart:mEnd]) > 0.6):
+        mouthMAR = mouth_aspect_ratio(mouth)
+
+        if mouthMAR > MOUTH_AR_THRESH:  # Check if yawn is detected
             cv2.putText(gray, "Yawn Detected", (50, 50), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 127), 2)
             yawn_countdown = 1
-            # Play yawn sequence in a separate thread if not already playing
             if yawn_thread is None or not yawn_thread.is_alive():
-                try:
-                    yawn_thread = threading.Thread(
-                        target=play_yawn_sequence, 
-                        args=([focus_sound, take_break_sound],),
-                        kwargs={'repeat': 3}
-                    )
-                    yawn_thread.daemon = True
-                    yawn_thread.start()
-                except Exception as e:
-                    print(f"Error playing yawn sequence: {e}")
+                yawn_thread = threading.Thread(
+                    target=play_yawn_sequence, 
+                    args=([focus_sound, take_break_sound],),
+                    kwargs={'repeat': 3}
+                )
+                yawn_thread.daemon = True
+                yawn_thread.start()
         else:
             yawn_countdown = 0  # Reset yawn state when no yawn detected
 
-        if (avgEAR < close_thresh):
+        if avgEAR < close_thresh:
             flag += 1
             eyeContourColor = (0, 255, 255)
-            
             if drowsy_start_time is None:
                 drowsy_start_time = datetime.datetime.now()
             
@@ -210,8 +258,7 @@ while (True):
             drowsy_duration = (current_time - drowsy_start_time).total_seconds() if drowsy_start_time else 0
             
             if drowsy_duration >= DROWSY_THRESHOLD:
-                if (last_capture_time is None or 
-                    (current_time - last_capture_time).total_seconds() >= CAPTURE_INTERVAL):
+                if last_capture_time is None or (current_time - last_capture_time).total_seconds() >= CAPTURE_INTERVAL:
                     save_drowsy_image(frame, "Drowsy State")
                     last_capture_time = current_time
                 
@@ -220,10 +267,9 @@ while (True):
                     alert_thread = threading.Thread(target=play_continuous_alert, args=(stop_alert,))
                     alert_thread.daemon = True
                     alert_thread.start()
-            
+
         else:  # Eyes are open
             if flag > 0:  # Only if we were previously in drowsy state
-                print("Flag reset to 0")
                 flag = 0
                 drowsy_start_time = None
                 
@@ -237,22 +283,13 @@ while (True):
                 if yawn_thread and yawn_thread.is_alive():
                     yawn_thread = None
 
-        if (map_counter >= 5):
-            map_flag = 1
-            map_counter = 0
-            winsound.PlaySound(alert_sound, winsound.SND_ASYNC | winsound.SND_FILENAME)
-
-            # webbrowser.open("https://www.google.com/maps/search/hotels+or+motels+near+me")
-
-            
-
         cv2.drawContours(gray, [leftEyeHull], -1, eyeContourColor, 2)
         cv2.drawContours(gray, [rightEyeHull], -1, eyeContourColor, 2)
         writeEyes(leftEye, rightEye, frame)
+
     cv2.imshow('Driver', gray)
     key = cv2.waitKey(1) & 0xFF
-    if key==ord('q'):
-
+    if key == ord('q'):
         break
 
 capture.release()
