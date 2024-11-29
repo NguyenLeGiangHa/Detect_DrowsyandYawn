@@ -8,7 +8,6 @@ import datetime
 import threading
 import time
 import requests 
-
 import train as train
 import winsound
 from MAR import mouth_aspect_ratio  
@@ -139,38 +138,31 @@ def initialize_api_handler():
 }
     api_handler = APIHandler(LOGIN_API_URL, LOGIN_CREDENTIALS)
 
-# Thêm các biến toàn cục mới
-first_drowsy_time = None  # Thời điểm phát hiện buồn ngủ đầu tiên
-consecutive_drowsy_count = 0  # Đếm số lần liên tiếp phát hiện buồn ngủ
-CONSECUTIVE_DROWSY_INTERVAL = 5 * 60  # 5 phút
-REPEATED_DROWSY_INTERVAL = 5 * 60  # 5 phút cho việc chụp ảnh và gửi cảnh báo
+first_drowsy_time = None  
+consecutive_drowsy_count = 0  
+CONSECUTIVE_DROWSY_INTERVAL = 5 * 60  
+REPEATED_DROWSY_INTERVAL = 5 * 60  
 
 def save_drowsy_image(frame, detection_type):
     global first_drowsy_time, consecutive_drowsy_count
     
     current_time = datetime.datetime.now()
     
-    # Kiểm tra khoảng cách thời gian giữa các lần phát hiện buồn ngủ
     if first_drowsy_time is None:
-        # Lần phát hiện buồn ngủ đầu tiên
         first_drowsy_time = current_time
         consecutive_drowsy_count = 1
     else:
         time_difference = (current_time - first_drowsy_time).total_seconds()
         
         if time_difference < CONSECUTIVE_DROWSY_INTERVAL:
-            # Nếu khoảng cách < 5 phút
             consecutive_drowsy_count += 1
-            
-            # Chỉ chụp và gửi ảnh 1 lần trong giai đoạn này
-            return False  # Không chụp ảnh, chỉ phát cảnh báo
+            return False
         
         else:
-            # Nếu khoảng cách >= 5 phút, reset tất cả
             first_drowsy_time = current_time
             consecutive_drowsy_count = 1
             
-    return True  # Chụp ảnh và gửi ảnh
+    return True  
 
 DROWSY_THRESHOLD = 5  
 drowsy_start_time = None
@@ -248,10 +240,6 @@ while (True):
             drowsy_duration = (current_time - drowsy_start_time).total_seconds() if drowsy_start_time else 0
             
             if drowsy_duration >= DROWSY_THRESHOLD:
-                # Luôn phát cảnh báo khi phát hiện trạng thái ngủ gật
-                # print("Warning: Drowsiness detected!")
-                
-                # Chỉ chụp ảnh nếu save_drowsy_image trả về True
                 if last_capture_time is None or (current_time - last_capture_time).total_seconds() >= CAPTURE_INTERVAL:
                     if save_drowsy_image(frame, "Drowsy State"):
                         timestamp = current_time.strftime('%Y%m%d_%H%M%S')
@@ -273,9 +261,7 @@ while (True):
                         cv2.imwrite(filename, frame_with_info)
                         print(f"Saved drowsy detection image: {filename}")
                         api_handler.upload_image(filename)
-                        last_capture_time = current_time  # Update last capture time
-                
-                # Phát cảnh báo liên tục cho đến khi tài xế mở mắt
+                        last_capture_time = current_time  
                 if alert_thread is None or not alert_thread.is_alive():
                     stop_alert.clear()
                     alert_thread = threading.Thread(target=play_continuous_alert, args=(stop_alert,))
