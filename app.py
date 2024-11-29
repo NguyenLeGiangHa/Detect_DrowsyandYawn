@@ -7,8 +7,7 @@ import os
 import datetime
 import threading
 import time
-import requests  # Import requests for making API calls
-import json  # Import json for handling JSON data
+import requests 
 
 import train as train
 import winsound
@@ -41,8 +40,6 @@ def getFaceDirection(shape, size):
 
     ])
 
-    # Camera internals
-
     focal_length = size[1]
     center = (size[1] / 2, size[0] / 2)
     camera_matrix = np.array(
@@ -60,7 +57,6 @@ def euclideanDist(a, b):
     return math.sqrt(math.pow(a[0] - b[0], 2) + math.pow(a[1] - b[1], 2))
 
 
-# EAR -> Eye Aspect ratio
 def ear(eye):
     return (euclideanDist(eye[1], eye[5]) + euclideanDist(eye[2], eye[4])) / (2 * euclideanDist(eye[0], eye[3]))
 
@@ -85,7 +81,7 @@ frame_thresh_1 = 15
 frame_thresh_2 = 10
 frame_thresh_3 = 5
 
-close_thresh = 0.3  # (close_avg+open_avg)/2.0
+close_thresh = 0.3  
 flag = 0
 yawn_countdown = 0
 map_counter = 0
@@ -102,10 +98,8 @@ predictor = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
 DRIVER_INFO = {
     'id': 'USER001',
     'name': 'John Doe',
-    'license': 'ABC123'
 }
 
-# Create directory for storing captured images
 CAPTURE_DIR = 'captured_drowsy'
 if not os.path.exists(CAPTURE_DIR):
     os.makedirs(CAPTURE_DIR)
@@ -122,7 +116,7 @@ class APIHandler:
         response = self.session.post(self.login_url, json=self.credentials)
         if response.status_code == 200:
             print("Login successful.")
-            self.user_id = response.json().get('id')  # Extract user ID from response
+            self.user_id = response.json().get('id')  
         else:
             print(f"Login failed: {response.status_code}, {response.text}")
 
@@ -135,7 +129,7 @@ class APIHandler:
             response = self.session.post('http://103.77.209.93:3001/api/violate/add', files=files)
             print(f"Response from API: {response.status_code}, {response.text}")
 
-# Initialize API handler
+
 def initialize_api_handler():
     global api_handler
     LOGIN_API_URL = "http://103.77.209.93:3001/api/login/user-login"
@@ -145,76 +139,72 @@ def initialize_api_handler():
 }
     api_handler = APIHandler(LOGIN_API_URL, LOGIN_CREDENTIALS)
 
-# Modify save_drowsy_image to upload image to API
-def save_drowsy_image(frame, detection_type):
-    """
-    Save the frame with timestamp and driver information
-    """
-    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f"{CAPTURE_DIR}/drowsy_{api_handler.user_id}_{timestamp}.jpg"  # Use user ID from API handler
-    
-    # Create a copy of the frame to add information
-    frame_with_info = frame.copy()
-    
-    # Add information to the image
-    info_text = [
-        # f"Driver ID: {DRIVER_INFO['id']}",
-        # f"Name: {DRIVER_INFO['name']}",
-        # f"License: {DRIVER_INFO['license']}",
-        f"Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"Detection: {detection_type}"
-    ]
-    
-    # Add text to image
-    y_position = 30
-    for text in info_text:
-        cv2.putText(frame_with_info, text, (10, y_position),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        y_position += 30
-    
-    # Save the image
-    cv2.imwrite(filename, frame_with_info)
-    print(f"Saved drowsy detection image: {filename}")
-    
-    # Attempt to upload the image to the API
-    api_handler.upload_image(filename)
+# Thêm các biến toàn cục mới
+first_drowsy_time = None  # Thời điểm phát hiện buồn ngủ đầu tiên
+consecutive_drowsy_count = 0  # Đếm số lần liên tiếp phát hiện buồn ngủ
+CONSECUTIVE_DROWSY_INTERVAL = 5 * 60  # 5 phút
+REPEATED_DROWSY_INTERVAL = 5 * 60  # 5 phút cho việc chụp ảnh và gửi cảnh báo
 
-DROWSY_THRESHOLD = 5  # seconds before alert triggers
+def save_drowsy_image(frame, detection_type):
+    global first_drowsy_time, consecutive_drowsy_count
+    
+    current_time = datetime.datetime.now()
+    
+    # Kiểm tra khoảng cách thời gian giữa các lần phát hiện buồn ngủ
+    if first_drowsy_time is None:
+        # Lần phát hiện buồn ngủ đầu tiên
+        first_drowsy_time = current_time
+        consecutive_drowsy_count = 1
+    else:
+        time_difference = (current_time - first_drowsy_time).total_seconds()
+        
+        if time_difference < CONSECUTIVE_DROWSY_INTERVAL:
+            # Nếu khoảng cách < 5 phút
+            consecutive_drowsy_count += 1
+            
+            # Chỉ chụp và gửi ảnh 1 lần trong giai đoạn này
+            return False  # Không chụp ảnh, chỉ phát cảnh báo
+        
+        else:
+            # Nếu khoảng cách >= 5 phút, reset tất cả
+            first_drowsy_time = current_time
+            consecutive_drowsy_count = 1
+            
+    return True  # Chụp ảnh và gửi ảnh
+
+DROWSY_THRESHOLD = 5  
 drowsy_start_time = None
 last_capture_time = None
 CAPTURE_INTERVAL = 5  
 
-# Add this function to play yawn sequence
 def play_yawn_sequence(sound_files, repeat=3):
     for _ in range(repeat):
-        if not (yawn_countdown):  # Stop if no longer in yawn state
+        if not (yawn_countdown):
             break
         for sound in sound_files:
-            if not (yawn_countdown):  # Stop if no longer in yawn state
+            if not (yawn_countdown): 
                 break
             winsound.PlaySound(sound, winsound.SND_FILENAME)
             time.sleep(0.1)
 
-# Add this function to play continuous alert
+
 def play_continuous_alert(stop_event):
     while not stop_event.is_set():
         winsound.PlaySound(alert_sound, winsound.SND_FILENAME)
         time.sleep(0.1)
 
-# Add these variables at the global scope
 stop_alert = threading.Event()
 alert_thread = None
 yawn_thread = None
 
-MOUTH_AR_THRESH = 1.2  # Set the threshold for yawn detection
+MOUTH_AR_THRESH = 1.2  
 
-# Call the initialize function at the start of the application
 initialize_api_handler()
 
 while (True):
     ret, frame = capture.read()
     if not ret:
-        break  # Exit if frame is not captured
+        break  
 
     gray = frame
     rects = detector(gray, 0)
@@ -222,7 +212,7 @@ while (True):
         shape = face_utils.shape_to_np(predictor(gray, rects[0]))
         leftEye = shape[leStart:leEnd]
         rightEye = shape[reStart:reEnd]
-        mouth = shape[mStart:mEnd]  # Get mouth coordinates
+        mouth = shape[mStart:mEnd]  
 
         leftEyeHull = cv2.convexHull(leftEye)
         rightEyeHull = cv2.convexHull(rightEye)
@@ -234,7 +224,7 @@ while (True):
 
         mouthMAR = mouth_aspect_ratio(mouth)
 
-        if mouthMAR > MOUTH_AR_THRESH:  # Check if yawn is detected
+        if mouthMAR > MOUTH_AR_THRESH: 
             cv2.putText(gray, "Yawn Detected", (50, 50), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 127), 2)
             yawn_countdown = 1
             if yawn_thread is None or not yawn_thread.is_alive():
@@ -246,7 +236,7 @@ while (True):
                 yawn_thread.daemon = True
                 yawn_thread.start()
         else:
-            yawn_countdown = 0  # Reset yawn state when no yawn detected
+            yawn_countdown = 0 
 
         if avgEAR < close_thresh:
             flag += 1
@@ -258,27 +248,49 @@ while (True):
             drowsy_duration = (current_time - drowsy_start_time).total_seconds() if drowsy_start_time else 0
             
             if drowsy_duration >= DROWSY_THRESHOLD:
-                if last_capture_time is None or (current_time - last_capture_time).total_seconds() >= CAPTURE_INTERVAL:
-                    save_drowsy_image(frame, "Drowsy State")
-                    last_capture_time = current_time
+                # Luôn phát cảnh báo khi phát hiện trạng thái ngủ gật
+                # print("Warning: Drowsiness detected!")
                 
+                # Chỉ chụp ảnh nếu save_drowsy_image trả về True
+                if last_capture_time is None or (current_time - last_capture_time).total_seconds() >= CAPTURE_INTERVAL:
+                    if save_drowsy_image(frame, "Drowsy State"):
+                        timestamp = current_time.strftime('%Y%m%d_%H%M%S')
+                        filename = f"{CAPTURE_DIR}/drowsy_{api_handler.user_id}_{timestamp}.jpg"     
+                        frame_with_info = frame.copy()
+                        
+                        info_text = [
+                            f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}",
+                            f"Detection: Drowsy State",
+                            f"Consecutive Drowsy: {consecutive_drowsy_count}"
+                        ]
+                        
+                        y_position = 30
+                        for text in info_text:
+                            cv2.putText(frame_with_info, text, (10, y_position),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                            y_position += 30
+                        
+                        cv2.imwrite(filename, frame_with_info)
+                        print(f"Saved drowsy detection image: {filename}")
+                        api_handler.upload_image(filename)
+                        last_capture_time = current_time  # Update last capture time
+                
+                # Phát cảnh báo liên tục cho đến khi tài xế mở mắt
                 if alert_thread is None or not alert_thread.is_alive():
                     stop_alert.clear()
                     alert_thread = threading.Thread(target=play_continuous_alert, args=(stop_alert,))
                     alert_thread.daemon = True
                     alert_thread.start()
 
-        else:  # Eyes are open
-            if flag > 0:  # Only if we were previously in drowsy state
+        else:  
+            if flag > 0:  
                 flag = 0
                 drowsy_start_time = None
                 
-                # Stop the alert sound
                 if alert_thread and alert_thread.is_alive():
                     stop_alert.set()
                     alert_thread = None
                 
-                # Also stop any yawn sounds if they're still playing
                 yawn_countdown = 0
                 if yawn_thread and yawn_thread.is_alive():
                     yawn_thread = None
@@ -295,7 +307,6 @@ while (True):
 capture.release()
 cv2.destroyAllWindows()
 
-# Cleanup at the end of the script
 if alert_thread and alert_thread.is_alive():
     stop_alert.set()
 if yawn_thread and yawn_thread.is_alive():
