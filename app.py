@@ -124,7 +124,7 @@ class APIHandler:
             print("User ID is required for image upload.")
             return
         with open(image_path, 'rb') as img_file:
-            files = {'violate_photo': (image_path, img_file)}
+            files = {'violate_photo': (image_path, img_file, 'image/png')}
             response = self.session.post('http://103.77.209.93:3001/api/violate/add', files=files)
             print(f"Response from API: {response.status_code}, {response.text}")
 
@@ -243,10 +243,12 @@ while (True):
                 if last_capture_time is None or (current_time - last_capture_time).total_seconds() >= CAPTURE_INTERVAL:
                     if save_drowsy_image(frame, "Drowsy State"):
                         timestamp = current_time.strftime('%Y%m%d_%H%M%S')
-                        filename = f"{CAPTURE_DIR}/drowsy_{api_handler.user_id}_{timestamp}.jpg"     
+                        filename = f"{CAPTURE_DIR}/{timestamp}.png"     
                         frame_with_info = frame.copy()
                         
                         info_text = [
+                            f"Driver_ID: {DRIVER_INFO['id']}",
+                            f"Driver: {DRIVER_INFO['name']}",
                             f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}",
                             f"Detection: Drowsy State",
                             f"Consecutive Drowsy: {consecutive_drowsy_count}"
